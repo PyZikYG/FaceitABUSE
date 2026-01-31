@@ -8,8 +8,27 @@ let isWaitingForButton = false;
 
 init();
 
+function safeStorageSet(data, callback) {
+  try {
+    if (chrome.runtime && chrome.runtime.id) {
+      chrome.storage.sync.set(data, callback);
+    }
+  } catch (error) {
+  }
+}
+
+function safeStorageGet(keys, callback) {
+  try {
+    if (chrome.runtime && chrome.runtime.id) {
+      chrome.storage.sync.get(keys, callback);
+    }
+  } catch (error) {
+    if (callback) callback({});
+  }
+}
+
 function init() {
-  chrome.storage.sync.get(['autoClickEnabled', 'hotkey', 'hotkey2', 'keyPressedState', 'waitingForButton'], function(result) {
+  safeStorageGet(['autoClickEnabled', 'hotkey', 'hotkey2', 'keyPressedState', 'waitingForButton'], function(result) {
     autoClickEnabled = result.autoClickEnabled || false;
     currentHotkey = result.hotkey || {key: 'KeyF', keyName: 'F'};
     currentHotkey2 = result.hotkey2 || {key: 'KeyR', keyName: 'R'};
@@ -30,27 +49,32 @@ function init() {
     }
   });
   
-  chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-    if (request.action === 'toggleAutoClick') {
-      autoClickEnabled = request.enabled;
-      if (autoClickEnabled) {
-        startWatching();
-      } else {
-        stopWatching();
-        chrome.storage.sync.set({keyPressedState: false});
-      }
-    } else if (request.action === 'updateHotkey') {
-      currentHotkey = request.hotkey;
-    } else if (request.action === 'updateHotkey2') {
-      currentHotkey2 = request.hotkey2;
+  try {
+    if (chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener(function(request) {
+        if (request.action === 'toggleAutoClick') {
+          autoClickEnabled = request.enabled;
+          if (autoClickEnabled) {
+            startWatching();
+          } else {
+            stopWatching();
+            safeStorageSet({keyPressedState: false});
+          }
+        } else if (request.action === 'updateHotkey') {
+          currentHotkey = request.hotkey;
+        } else if (request.action === 'updateHotkey2') {
+          currentHotkey2 = request.hotkey2;
+        }
+      });
     }
-  });
+  } catch (error) {
+  }
   
   document.addEventListener('keydown', handleKeyDown, true);
   document.addEventListener('keyup', handleKeyUp, true);
   
   window.addEventListener('beforeunload', function() {
-    chrome.storage.sync.set({keyPressedState: isKeyPressed});
+    safeStorageSet({keyPressedState: isKeyPressed});
   });
 }
 
@@ -59,7 +83,7 @@ function handleKeyDown(event) {
     event.preventDefault();
     if (!isKeyPressed && autoClickEnabled) {
       isKeyPressed = true;
-      chrome.storage.sync.set({keyPressedState: true});
+      safeStorageSet({keyPressedState: true});
       startAutoClicking();
       startKeyStateMonitoring();
     }
@@ -67,7 +91,7 @@ function handleKeyDown(event) {
   
   if (event.code === currentHotkey2.key && autoClickEnabled) {
     event.preventDefault();
-    chrome.storage.sync.set({waitingForButton: true}, function() {
+    safeStorageSet({waitingForButton: true}, function() {
       location.reload();
     });
   }
@@ -77,7 +101,7 @@ function handleKeyUp(event) {
   if (event.code === currentHotkey.key) {
     if (isKeyPressed) {
       isKeyPressed = false;
-      chrome.storage.sync.set({keyPressedState: false});
+      safeStorageSet({keyPressedState: false});
       stopAutoClicking();
       stopKeyStateMonitoring();
     }
@@ -113,34 +137,46 @@ function stopKeyStateMonitoring() {
 function startWatching() {
   checkForButton();
   
-  observer = new MutationObserver(function(mutations) {
-    mutations.forEach(function(mutation) {
-      if (mutation.type === 'childList') {
-        checkForButton();
-        
-        if (isKeyPressed && window.matchButton) {
-          checkButtonChanges();
-        }
-        
-        if (isWaitingForButton && window.matchButton) {
-          const button = window.matchButton;
-          if (button.offsetParent !== null) {
-            setTimeout(() => {
-              if (isWaitingForButton) {
-                waitForButtonAndClick();
+  try {
+    if (observer) {
+      observer.disconnect();
+    }
+    
+    observer = new MutationObserver(function(mutations) {
+      try {
+        mutations.forEach(function(mutation) {
+          if (mutation.type === 'childList') {
+            checkForButton();
+            
+            if (isKeyPressed && window.matchButton) {
+              checkButtonChanges();
+            }
+            
+            if (isWaitingForButton && window.matchButton) {
+              const button = window.matchButton;
+              if (button.offsetParent !== null && !button.disabled) {
+                setTimeout(() => {
+                  if (isWaitingForButton) {
+                    waitForButtonAndClick();
+                  }
+                }, 500);
               }
-            }, 500);
+            }
           }
-        }
+        });
+      } catch (error) {
       }
     });
-  });
-  
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true
-  });
+    
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+    }
+  } catch (error) {
+  }
 }
 
 function stopWatching() {
@@ -151,68 +187,33 @@ function stopWatching() {
 }
 
 function checkForButton() {
-  const buttons = document.querySelectorAll('button');
-  for (let button of buttons) {
-    const textContent = button.textContent.trim();
-    if (textContent === 'Найти матч') {
-      if (button.disabled) {
-        tryToEnableButton(button);
+  try {
+    const buttons = document.querySelectorAll('button');
+    for (let button of buttons) {
+      const textContent = button.textContent.trim();
+      if (textContent === 'Найти матч') {
+        window.matchButton = button;
+        return button;
       }
+    }
+    
+    const specificButton = document.querySelector('.styles__ButtonTextWrapper-sc-b58dd53c-7.ktzBTR');
+    if (specificButton && specificButton.textContent.trim() === 'Найти матч') {
+      const button = specificButton.closest('button');
       window.matchButton = button;
       return button;
     }
-  }
-  
-  const specificButton = document.querySelector('.styles__ButtonTextWrapper-sc-b58dd53c-7.ktzBTR');
-  if (specificButton && specificButton.textContent.trim() === 'Найти матч') {
-    const button = specificButton.closest('button');
-    if (button && button.disabled) {
-      tryToEnableButton(button);
+    
+    if (window.matchButton) {
+      window.matchButton = null;
     }
-    window.matchButton = button;
-    return button;
+    
+    return null;
+  } catch (error) {
+    return null;
   }
-  
-  if (window.matchButton) {
-    window.matchButton = null;
-  }
-  
-  return null;
 }
 
-function tryToEnableButton(button) {
-  try {
-    button.removeAttribute('disabled');
-    button.disabled = false;
-    
-    const disabledClasses = ['disabled', 'inactive', 'blocked', 'loading'];
-    disabledClasses.forEach(className => {
-      button.classList.remove(className);
-    });
-    
-    let parent = button.parentElement;
-    while (parent && parent !== document.body) {
-      parent.classList.remove('disabled', 'inactive', 'blocked');
-      if (parent.style.pointerEvents === 'none') {
-        parent.style.pointerEvents = 'auto';
-      }
-      parent = parent.parentElement;
-    }
-    
-    if (button.style.pointerEvents === 'none') {
-      button.style.pointerEvents = 'auto';
-    }
-    
-    button.setAttribute('aria-disabled', 'false');
-    
-    const events = ['focus', 'mouseenter', 'mouseover'];
-    events.forEach(eventType => {
-      const event = new Event(eventType, { bubbles: true });
-      button.dispatchEvent(event);
-    });
-  } catch (error) {
-  }
-}
 
 function checkButtonChanges() {
   if (!window.matchButton || !document.contains(window.matchButton)) {
@@ -227,7 +228,7 @@ function checkButtonChanges() {
     return;
   }
   
-  if (window.matchButton.offsetParent === null) {
+  if (window.matchButton.offsetParent === null || window.matchButton.disabled) {
     stopAutoClickingDueToChange();
     return;
   }
@@ -235,7 +236,7 @@ function checkButtonChanges() {
 
 function stopAutoClickingDueToChange() {
   isKeyPressed = false;
-  chrome.storage.sync.set({keyPressedState: false});
+  safeStorageSet({keyPressedState: false});
   stopKeyStateMonitoring();
 }
 
@@ -256,15 +257,7 @@ function startAutoClicking() {
       button = checkForButton();
     }
     
-    if (button && button.offsetParent !== null) {
-      if (button.disabled) {
-        tryToEnableButton(button);
-        setTimeout(() => {
-          if (!button.disabled) {
-          }
-        }, 50);
-      }
-      
+    if (button && button.offsetParent !== null && !button.disabled) {
       const currentButtonText = button.textContent.trim();
       
       if (lastButtonState === null) {
@@ -287,26 +280,12 @@ function startAutoClicking() {
         view: window
       });
       
-      if (button.disabled) {
-        const wasDisabled = button.disabled;
-        button.disabled = false;
-        button.removeAttribute('disabled');
-        
-        button.dispatchEvent(clickEvent);
-        
-        try {
-          button.click();
-          clickCount++;
-        } catch (e) {
-        }
-      } else {
-        button.dispatchEvent(clickEvent);
-        
-        try {
-          button.click();
-          clickCount++;
-        } catch (e) {
-        }
+      button.dispatchEvent(clickEvent);
+      
+      try {
+        button.click();
+        clickCount++;
+      } catch (e) {
       }
       
       button.style.transform = 'scale(0.95)';
@@ -336,36 +315,21 @@ function waitForButtonAndClick() {
     }
     
     const button = checkForButton();
-    if (button && button.offsetParent !== null) {
-      if (button.disabled) {
-        tryToEnableButton(button);
-        
-        setTimeout(() => {
-          if (!button.disabled || true) {
-            performAutoClick(button);
-          }
-        }, 200);
-      } else {
-        performAutoClick(button);
-      }
+    if (button && button.offsetParent !== null && !button.disabled) {
+      performAutoClick(button);
     }
   }, 100);
   
   setTimeout(() => {
     if (isWaitingForButton) {
       isWaitingForButton = false;
-      chrome.storage.sync.set({waitingForButton: false});
+      safeStorageSet({waitingForButton: false});
       clearInterval(checkInterval);
     }
   }, 10000);
 }
 
 function performAutoClick(button) {
-  if (button.disabled) {
-    button.disabled = false;
-    button.removeAttribute('disabled');
-  }
-  
   const clickEvent = new MouseEvent('click', {
     bubbles: true,
     cancelable: true,
@@ -387,52 +351,73 @@ function performAutoClick(button) {
   }, 100);
   
   isWaitingForButton = false;
-  chrome.storage.sync.set({waitingForButton: false});
+  safeStorageSet({waitingForButton: false});
 }
 
-let currentUrl = location.href;
-new MutationObserver(() => {
-  if (location.href !== currentUrl) {
-    currentUrl = location.href;
-    chrome.storage.sync.set({keyPressedState: isKeyPressed});
-    setTimeout(() => {
-      chrome.storage.sync.get(['keyPressedState'], function(result) {
-        if (result.keyPressedState && autoClickEnabled) {
-          isKeyPressed = true;
-          startAutoClicking();
-          startKeyStateMonitoring();
-        }
-      });
-    }, 1000);
+function initPageChangeObserver() {
+  let currentUrl = location.href;
+  
+  try {
+    new MutationObserver(() => {
+      if (location.href !== currentUrl) {
+        currentUrl = location.href;
+        safeStorageSet({keyPressedState: isKeyPressed});
+        setTimeout(() => {
+          safeStorageGet(['keyPressedState'], function(result) {
+            if (result.keyPressedState && autoClickEnabled) {
+              isKeyPressed = true;
+              startAutoClicking();
+              startKeyStateMonitoring();
+            }
+          });
+        }, 1000);
+      }
+    }).observe(document, {subtree: true, childList: true});
+  } catch (error) {
   }
-}).observe(document, {subtree: true, childList: true});
+}
 
-document.addEventListener('visibilitychange', function() {
-  if (document.hidden) {
-    chrome.storage.sync.set({keyPressedState: isKeyPressed});
-  } else {
-    chrome.storage.sync.get(['keyPressedState'], function(result) {
-      if (result.keyPressedState && autoClickEnabled && !isKeyPressed) {
-        isKeyPressed = true;
-        startAutoClicking();
-        startKeyStateMonitoring();
+function initVisibilityHandlers() {
+  try {
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) {
+        safeStorageSet({keyPressedState: isKeyPressed});
+      } else {
+        safeStorageGet(['keyPressedState'], function(result) {
+          if (result.keyPressedState && autoClickEnabled && !isKeyPressed) {
+            isKeyPressed = true;
+            startAutoClicking();
+            startKeyStateMonitoring();
+          }
+        });
       }
     });
-  }
-});
 
-window.addEventListener('blur', function() {
-  chrome.storage.sync.set({keyPressedState: isKeyPressed});
-});
-
-window.addEventListener('focus', function() {
-  setTimeout(() => {
-    chrome.storage.sync.get(['keyPressedState'], function(result) {
-      if (result.keyPressedState && autoClickEnabled && !isKeyPressed) {
-        isKeyPressed = true;
-        startAutoClicking();
-        startKeyStateMonitoring();
-      }
+    window.addEventListener('blur', function() {
+      safeStorageSet({keyPressedState: isKeyPressed});
     });
-  }, 100);
-});
+
+    window.addEventListener('focus', function() {
+      setTimeout(() => {
+        safeStorageGet(['keyPressedState'], function(result) {
+          if (result.keyPressedState && autoClickEnabled && !isKeyPressed) {
+            isKeyPressed = true;
+            startAutoClicking();
+            startKeyStateMonitoring();
+          }
+        });
+      }, 100);
+    });
+  } catch (error) {
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    initPageChangeObserver();
+    initVisibilityHandlers();
+  });
+} else {
+  initPageChangeObserver();
+  initVisibilityHandlers();
+}
