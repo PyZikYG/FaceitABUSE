@@ -1,0 +1,58 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Create extension package
+      run: |
+        mkdir -p release
+        cp manifest.json popup.html popup.js content.js icon.svg create_icons.html release/
+        cd release
+        zip -r ../faceit-auto-match-finder-${{ github.ref_name }}.zip .
+        
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: FACEIT Auto Match Finder ${{ github.ref }}
+        body: |
+          ## Что нового в этой версии
+          
+          ### 🚀 Возможности
+          - Автоматическое нажатие кнопки "Найти матч" на FACEIT
+          - Два режима: непрерывное нажатие и перезагрузка + автопоиск
+          - Настраиваемые горячие клавиши
+          - Активация заблокированных кнопок
+          - Умная остановка при изменении кнопки
+          
+          ### 📦 Установка
+          1. Скачайте `faceit-auto-match-finder-${{ github.ref_name }}.zip`
+          2. Распакуйте архив
+          3. Загрузите в Chrome как распакованное расширение
+          
+          ### ⚠️ Важно
+          Расширение работает только на сайте FACEIT.com
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./faceit-auto-match-finder-${{ github.ref_name }}.zip
+        asset_name: faceit-auto-match-finder-${{ github.ref_name }}.zip
+        asset_content_type: application/zip

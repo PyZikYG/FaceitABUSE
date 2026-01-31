@@ -1,0 +1,32 @@
+# Generated icons
+icon16.png
+icon48.png
+icon128.png
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Archive files
+*.zip
+*.rar
+*.7z
+
+# Temporary files
+*.tmp
+*.temp
